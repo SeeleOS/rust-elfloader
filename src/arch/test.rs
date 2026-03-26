@@ -7,6 +7,7 @@ pub(crate) enum LoaderAction {
     Allocate(VAddr, usize, Flags),
     Load(VAddr, usize),
     Relocate(VAddr, u64),
+    RelocateSymbol(VAddr, u32),
     Tls(VAddr, u64, u64, u64),
 }
 pub(crate) struct TestLoader {
@@ -69,7 +70,15 @@ impl ElfLoader for TestLoader {
                 Ok(())
             }
             x86(R_386_GLOB_DAT) => {
-                trace!("R_386_GLOB_DAT: Can't handle that.");
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_386_GLOB_DAT: symbol index {}", entry.index);
+                Ok(())
+            }
+            x86(R_386_JMP_SLOT) => {
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_386_JMP_SLOT: symbol index {}", entry.index);
                 Ok(())
             }
             x86(R_386_NONE) => Ok(()),
@@ -87,6 +96,12 @@ impl ElfLoader for TestLoader {
                 self.actions
                     .push(LoaderAction::Relocate(addr as u64, self.vbase + addend));
                 trace!("R_RELATIVE *{:p} = {:#x}", addr, self.vbase + addend);
+                Ok(())
+            }
+            RiscV(R_RISCV_JUMP_SLOT) => {
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_RISCV_JUMP_SLOT: symbol index {}", entry.index);
                 Ok(())
             }
 
@@ -122,11 +137,27 @@ impl ElfLoader for TestLoader {
                 Ok(())
             }
             AArch64(R_AARCH64_GLOB_DAT) => {
-                trace!("R_AARCH64_GLOB_DAT: Can't handle that.");
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_AARCH64_GLOB_DAT: symbol index {}", entry.index);
+                Ok(())
+            }
+            AArch64(R_AARCH64_JUMP_SLOT) => {
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_AARCH64_JUMP_SLOT: symbol index {}", entry.index);
                 Ok(())
             }
             x86_64(R_AMD64_GLOB_DAT) => {
-                trace!("R_AMD64_GLOB_DAT: Can't handle that.");
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_AMD64_GLOB_DAT: symbol index {}", entry.index);
+                Ok(())
+            }
+            x86_64(R_AMD64_JMP_SLOT) => {
+                self.actions
+                    .push(LoaderAction::RelocateSymbol(addr as u64, entry.index));
+                trace!("R_AMD64_JMP_SLOT: symbol index {}", entry.index);
                 Ok(())
             }
             x86_64(R_AMD64_NONE) => Ok(()),

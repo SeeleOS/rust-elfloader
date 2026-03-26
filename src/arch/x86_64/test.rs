@@ -12,7 +12,8 @@ fn load_pie_elf() {
     assert!(binary.is_pie());
 
     let mut loader = TestLoader::new(0x1000_0000);
-    binary.load(&mut loader).expect("Can't load?");
+    let loaded = binary.load(&mut loader).expect("Can't load?");
+    assert!(matches!(loaded, LoadedElf::Dynamic(_)));
 
     for action in loader.actions.iter() {
         println!("{:?}", action);
@@ -48,6 +49,26 @@ fn load_pie_elf() {
         .iter()
         .find(|&&x| x == LoaderAction::Relocate(0x1000_0000 + 0x200dc0, 0x1000_0000 + 0x000600))
         .is_some());
+    assert!(loader
+        .actions
+        .iter()
+        .find(|&&x| x == LoaderAction::Relocate(0x1000_0000 + 0x201008, 0x1000_0000 + 0x201008))
+        .is_some());
+    assert!(loader
+        .actions
+        .iter()
+        .find(|&&x| x == LoaderAction::RelocateSymbol(0x1000_0000 + 0x200fd0, 2))
+        .is_some());
+    assert!(loader
+        .actions
+        .iter()
+        .find(|&&x| x == LoaderAction::RelocateSymbol(0x1000_0000 + 0x200fd8, 1))
+        .is_some());
+    assert!(loader
+        .actions
+        .iter()
+        .find(|&&x| x == LoaderAction::RelocateSymbol(0x1000_0000 + 0x200ff8, 6))
+        .is_some());
 }
 
 #[test]
@@ -66,7 +87,8 @@ fn check_tls() {
     let binary_blob = fs::read("test/tls.x86_64").expect("Can't read binary");
     let binary = ElfBinary::new(binary_blob.as_slice()).expect("Got proper ELF file");
     let mut loader = TestLoader::new(0x1000_0000);
-    binary.load(&mut loader).expect("Can't load?");
+    let loaded = binary.load(&mut loader).expect("Can't load?");
+    assert!(matches!(loaded, LoadedElf::Dynamic(_)));
     /*
     TLS produces entries of this form:
     pheader = Program header:

@@ -12,7 +12,8 @@ fn load_pie_elf() {
     assert!(binary.is_pie());
 
     let mut loader = TestLoader::new(0x1000_0000);
-    binary.load(&mut loader).expect("Can't load?");
+    let loaded = binary.load(&mut loader).expect("Can't load?");
+    assert!(matches!(loaded, LoadedElf::Dynamic(_)));
 
     for action in loader.actions.iter() {
         println!("{:?}", action);
@@ -84,27 +85,32 @@ fn load_pie_elf() {
         LoaderAction::Relocate(0x1000_0000 + 0x11008, 0x1001_1008)
     );
 
-    // R_AARCH64_GLOB_DAT entries next, but we ignore them in the test loader:
-    /*assert_eq!(
+    assert_eq!(
         loader.actions[8],
-        LoaderAction::Relocate(0x1000_0000 + 0x10fd8, 0x1000_0000)
+        LoaderAction::RelocateSymbol(0x1000_0000 + 0x10fd8, 4)
     );
-
     assert_eq!(
         loader.actions[9],
-        LoaderAction::Relocate(0x1000_0000 + 0x10fe0, 0x1000_0000)
+        LoaderAction::RelocateSymbol(0x1000_0000 + 0x10fe0, 5)
     );
-
     assert_eq!(
         loader.actions[10],
-        LoaderAction::Relocate(0x1000_0000 + 0x10fe8, 0x1000_0000)
+        LoaderAction::RelocateSymbol(0x1000_0000 + 0x10fe8, 6)
     );
     assert_eq!(
         loader.actions[11],
-        LoaderAction::Relocate(0x1000_0000 + 0x10ff8, 0x1000_0000)
-    );*/
+        LoaderAction::RelocateSymbol(0x1000_0000 + 0x10ff8, 8)
+    );
+    assert_eq!(
+        loader.actions[12],
+        LoaderAction::RelocateSymbol(0x1000_0000 + 0x10fa8, 3)
+    );
+    assert_eq!(
+        loader.actions[16],
+        LoaderAction::RelocateSymbol(0x1000_0000 + 0x10fc8, 9)
+    );
 
-    assert_eq!(loader.actions.len(), 8);
+    assert_eq!(loader.actions.len(), 17);
 }
 
 #[test]
@@ -123,7 +129,8 @@ fn check_tls() {
     let binary_blob = fs::read("test/tls.aarch64").expect("Can't read binary");
     let binary = ElfBinary::new(binary_blob.as_slice()).expect("Got proper ELF file");
     let mut loader = TestLoader::new(0x1000_0000);
-    binary.load(&mut loader).expect("Can't load?");
+    let loaded = binary.load(&mut loader).expect("Can't load?");
+    assert!(matches!(loaded, LoadedElf::Dynamic(_)));
     /*
     TLS produces entries of this form:
     pheader = Program header:

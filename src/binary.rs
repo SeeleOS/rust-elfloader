@@ -1,6 +1,6 @@
 use crate::{
-    DynamicFlags1, DynamicInfo, ElfLoader, ElfLoaderErr, LoadableHeaders, RelocationEntry,
-    RelocationType,
+    BasicElf, DynamicElf, DynamicFlags1, DynamicInfo, ElfLoader, ElfLoaderErr, LoadableHeaders,
+    LoadedElf, RelocationEntry, RelocationType,
 };
 use core::fmt;
 #[cfg(log)]
@@ -9,7 +9,7 @@ use xmas_elf::dynamic::Tag;
 use xmas_elf::program::ProgramHeader::{self, Ph32, Ph64};
 use xmas_elf::program::{ProgramIter, SegmentData, Type};
 use xmas_elf::sections::SectionData;
-pub use xmas_elf::symbol_table::{Entry, Entry64};
+pub use xmas_elf::symbol_table::Entry;
 use xmas_elf::ElfFile;
 use xmas_elf::*;
 
@@ -104,9 +104,55 @@ impl<'s> ElfBinary<'s> {
         self.file.header.pt2.entry_point()
     }
 
+    /// Return the program header table address as seen by the loaded ELF image.
+    pub fn program_header_table(&self) -> u64 {
+        let load_base = self
+            .program_headers()
+            .find(|header| header.get_type() == Ok(Type::Load))
+            .map(|header| header.virtual_addr())
+            .unwrap_or(0);
+        load_base + self.file.header.pt2.ph_offset()
+    }
+
+    pub fn program_header_entry_size(&self) -> u16 {
+        self.file.header.pt2.ph_entry_size()
+    }
+
+    pub fn program_header_count(&self) -> u16 {
+        self.file.header.pt2.ph_count()
+    }
+
+    fn loaded_info(&'s self) -> LoadedElf<'s> {
+        let entry_point = self.entry_point();
+        let program_header_table = self.program_header_table();
+        let program_header_entry_size = self.program_header_entry_size();
+        let program_header_count = self.program_header_count();
+
+        match (self.interpreter(), self.dynamic.as_ref()) {
+            (Some(interpreter), Some(dynamic)) => LoadedElf::Dynamic(DynamicElf {
+                entry_point,
+                program_header_table,
+                program_header_entry_size,
+                program_header_count,
+                interpreter,
+                is_pie: dynamic.flags1.contains(DynamicFlags1::PIE),
+                dynamic: dynamic.clone(),
+            }),
+            _ => LoadedElf::Basic(BasicElf {
+                entry_point,
+                program_header_table,
+                program_header_entry_size,
+                program_header_count,
+            }),
+        }
+    }
+
     /// Create a slice of the program headers.
-    pub fn program_headers(&self) -> ProgramIter {
-        self.file.program_iter()
+    pub fn program_headers(&self) -> ProgramIter<'_, 's> {
+        ProgramIter {
+            file: &self.file,
+            next_index: 0,
+        }
     }
 
     /// Get the name of the sectione
@@ -122,6 +168,7 @@ impl<'s> ElfBinary<'s> {
         let symbol_section = self
             .file
             .find_section_by_name(".symtab")
+            .or_else(|| self.file.find_section_by_name(".dynsym"))
             .ok_or(ElfLoaderErr::SymbolTableNotFound)?;
         let symbol_table = symbol_section.get_data(&self.file)?;
         match symbol_table {
@@ -132,6 +179,18 @@ impl<'s> ElfBinary<'s> {
                 Ok(())
             }
             SectionData::SymbolTable64(entries) => {
+                for entry in entries {
+                    func(entry);
+                }
+                Ok(())
+            }
+            SectionData::DynSymbolTable32(entries) => {
+                for entry in entries {
+                    func(entry);
+                }
+                Ok(())
+            }
+            SectionData::DynSymbolTable64(entries) => {
                 for entry in entries {
                     func(entry);
                 }
@@ -170,14 +229,6 @@ impl<'s> ElfBinary<'s> {
         // Relocation types are architecture specific
         let arch = self.get_arch();
 
-        // It's easier to just locate the section by name, either:
-        // - .rela.dyn
-        // - .rel.dyn
-        let relocation_section = self
-            .file
-            .find_section_by_name(".rela.dyn")
-            .or_else(|| self.file.find_section_by_name(".rel.dyn"));
-
         // Helper macro to call loader.relocate() on all entries
         macro_rules! iter_entries_and_relocate {
             ($rela_entries:expr, $create_addend:ident) => {
@@ -206,9 +257,12 @@ impl<'s> ElfBinary<'s> {
             };
         }
 
-        // If either section exists apply the relocations
-        relocation_section.map_or(Ok(()), |rela_section_dyn| {
-            let data = rela_section_dyn.get_data(&self.file)?;
+        let mut relocate_section = |section_name| -> Result<(), ElfLoaderErr> {
+            let Some(relocation_section) = self.file.find_section_by_name(section_name) else {
+                return Ok(());
+            };
+
+            let data = relocation_section.get_data(&self.file)?;
             match data {
                 SectionData::Rel32(rel_entries) => {
                     iter_entries_and_relocate!(rel_entries, rel_entry);
@@ -225,7 +279,15 @@ impl<'s> ElfBinary<'s> {
                 _ => return Err(ElfLoaderErr::UnsupportedSectionData),
             }
             Ok(())
-        })
+        };
+
+        relocate_section(".rela.dyn")?;
+        relocate_section(".rel.dyn")?;
+        relocate_section(".rela.plt")?;
+        relocate_section(".rel.plt")?;
+        relocate_section(".rela.plt.sec")?;
+
+        Ok(())
     }
 
     /// Processes a dynamic header section.
@@ -320,7 +382,7 @@ impl<'s> ElfBinary<'s> {
     ///
     /// Will tell loader to create space in the address space / region where the
     /// header is supposed to go, then copy it there, and finally relocate it.
-    pub fn load(&self, loader: &mut dyn ElfLoader) -> Result<(), ElfLoaderErr> {
+    pub fn load(&'s self, loader: &mut dyn ElfLoader) -> Result<LoadedElf<'s>, ElfLoaderErr> {
         self.is_loadable()?;
 
         loader.allocate(self.iter_loadable_headers())?;
@@ -362,10 +424,10 @@ impl<'s> ElfBinary<'s> {
             }
         }
 
-        Ok(())
+        Ok(self.loaded_info())
     }
 
-    fn iter_loadable_headers(&self) -> LoadableHeaders {
+    fn iter_loadable_headers(&self) -> LoadableHeaders<'_, 's> {
         // Trying to determine loadeable headers
         fn select_load(pheader: &ProgramHeader) -> bool {
             match pheader {
@@ -384,7 +446,11 @@ impl<'s> ElfBinary<'s> {
         // headers and pass it to the loader
         // TODO: This is pretty ugly, maybe we can do something with impl Trait?
         // https://stackoverflow.com/questions/27535289/what-is-the-correct-way-to-return-an-iterator-or-any-other-trait
-        self.file.program_iter().filter(select_load)
+        ProgramIter {
+            file: &self.file,
+            next_index: 0,
+        }
+        .filter(select_load)
     }
 }
 

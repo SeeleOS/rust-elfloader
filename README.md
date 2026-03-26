@@ -95,7 +95,21 @@ fn main() {
     let binary_blob = fs::read("test/test.x86_64").expect("Can't read binary");
     let binary = ElfBinary::new(binary_blob.as_slice()).expect("Got proper ELF file");
     let mut loader = ExampleLoader { vbase: 0x1000_0000 };
-    binary.load(&mut loader).expect("Can't load the binary?");
+    let loaded = binary.load(&mut loader).expect("Can't load the binary?");
+
+    match loaded {
+        LoadedElf::Basic(info) => {
+            info!("entry = {:#x}", info.entry_point);
+        }
+        LoadedElf::Dynamic(info) => {
+            info!(
+                "entry = {:#x} interpreter = {} phdr = {:#x}",
+                info.entry_point,
+                info.interpreter,
+                info.program_header_table
+            );
+        }
+    }
 }
 ```
 

@@ -47,6 +47,61 @@ pub struct RelocationEntry {
     pub addend: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BasicElf {
+    pub entry_point: u64,
+    pub program_header_table: u64,
+    pub program_header_entry_size: u16,
+    pub program_header_count: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DynamicElf<'a> {
+    pub entry_point: u64,
+    pub program_header_table: u64,
+    pub program_header_entry_size: u16,
+    pub program_header_count: u16,
+    pub interpreter: &'a str,
+    pub is_pie: bool,
+    pub dynamic: DynamicInfo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadedElf<'a> {
+    Basic(BasicElf),
+    Dynamic(DynamicElf<'a>),
+}
+
+impl<'a> LoadedElf<'a> {
+    pub fn entry_point(&self) -> u64 {
+        match self {
+            LoadedElf::Basic(info) => info.entry_point,
+            LoadedElf::Dynamic(info) => info.entry_point,
+        }
+    }
+
+    pub fn program_header_table(&self) -> u64 {
+        match self {
+            LoadedElf::Basic(info) => info.program_header_table,
+            LoadedElf::Dynamic(info) => info.program_header_table,
+        }
+    }
+
+    pub fn program_header_entry_size(&self) -> u16 {
+        match self {
+            LoadedElf::Basic(info) => info.program_header_entry_size,
+            LoadedElf::Dynamic(info) => info.program_header_entry_size,
+        }
+    }
+
+    pub fn program_header_count(&self) -> u16 {
+        match self {
+            LoadedElf::Basic(info) => info.program_header_count,
+            LoadedElf::Dynamic(info) => info.program_header_count,
+        }
+    }
+}
+
 #[derive(PartialEq, Clone, Debug)]
 pub enum ElfLoaderErr {
     ElfParser { source: &'static str },
@@ -125,6 +180,7 @@ bitflags! {
 }
 
 /// Information parse from the .dynamic section
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DynamicInfo {
     pub flags1: DynamicFlags1,
     pub rela: u64,
